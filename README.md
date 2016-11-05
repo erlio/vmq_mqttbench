@@ -11,5 +11,5 @@ Build
 Run
 ---
 
-    $ _build/default/bin/vmq_loadtest
+    $ _build/default/bin/vmq_mqttbench
 # vmq_mqttbench
