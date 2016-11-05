@@ -28,7 +28,7 @@ the `%c` is substituted with a randomly generated client id.
 
 ## run the benchmark
 
-    /vmq_loadtest -s sample.steps -p 1889 -h localhost --print-stats -n 10000 -r 100
+    ./vmq_mqttbench -s sample.steps -p 1889 -h localhost --print-stats -n 10000 -r 100
 
 ### ask for help 
 
