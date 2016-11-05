@@ -1,0 +1,9 @@
+{setup, [
+    {subscribe, "hello/world/%c", 0},
+    {tick, 30000}
+]}.
+{steps, [
+    {publish, "hello/world/%c", 0, 100},
+    {tick, 1000}
+
+]}.

@@ -1,0 +1,19 @@
+{application, vmq_loadtest,
+ [{description, "A simple but efficient MQTT loadtesting tool"},
+  {vsn, git},
+  {registered, []},
+  {applications,
+   [kernel,
+    sasl,
+    crypto,
+    public_key,
+    ssl,
+    stdlib
+   ]},
+  {env,[]},
+  {modules, []},
+
+  {maintainers, []},
+  {licenses, []},
+  {links, []}
+ ]}.
