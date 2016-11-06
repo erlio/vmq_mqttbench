@@ -21,6 +21,7 @@ start_link(Opts) ->
     proc_lib:start_link(?MODULE, init, [self(), Opts]).
 
 init(Parent, Opts) ->
+    random:seed(os:timestamp()),
     ok = proc_lib:init_ack(Parent, {ok, self()}),
     try
         put(track_stats, proplists:get_value(track_stats, Opts, true)),
@@ -32,7 +33,6 @@ init(Parent, Opts) ->
     metrics({num_instances, {dec, 1}}).
 
 connect_opts(Opts) ->
-    SrcIpStr = proplists:get_value(src_ip, Opts),
     Buffers = lists:foldl(fun({buffer, S} = B, Acc) when is_integer(S) ->
                                   [B|Acc];
                              ({sndbuf, S} = B, Acc) when is_integer(S) ->
@@ -45,16 +45,11 @@ connect_opts(Opts) ->
     ConnectOpts1 = [binary, {reuseaddr, true}, {active, false}, {packet, raw},
                     {nodelay, proplists:get_value(nodelay, Opts, false)}
                    |Buffers],
-
-    case proplists:get_value(src_ip, Opts) of
+    case proplists:get_value(src_ips, Opts) of
         undefined -> ConnectOpts1;
-        SrcIpStr ->
-            case inet:parse_address(SrcIpStr) of
-                {ok, SrcIp} ->
-                    [{ip, SrcIp}|ConnectOpts1];
-                {error, Reason} ->
-                    exit({cant_parse_src_ip, Reason})
-            end
+        SrcIps ->
+            SrcIp = lists:nth(random:uniform(length(SrcIps)), SrcIps),
+            [{ip, SrcIp}|ConnectOpts1]
     end.
 
 connect(Opts) ->
@@ -69,8 +64,8 @@ connect(true, Opts) ->
     connect(ssl, ConnectOpts, Opts).
 
 connect(Transport, ConnectOpts, Opts) ->
-    Host = proplists:get_value(host, Opts),
-    Port = proplists:get_value(port, Opts),
+    Hosts = proplists:get_value(hosts, Opts),
+    {Host, Port} = lists:nth(random:uniform(length(Hosts)), Hosts),
     case Transport:connect(Host, Port, ConnectOpts) of
         {ok, Socket} ->
             setup(Transport, Socket, Opts);

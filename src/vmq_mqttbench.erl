@@ -74,11 +74,47 @@ setup(Opts) ->
             io:format("Cant file:consult ~p due to ~p~n", [ScenarioFile, Reason]),
             erlang:halt(0);
         {ok, Scenario} ->
-            NewOpts = lists:keyreplace(scenario, 1, Opts, {scenario, Scenario}),
+            NewOpts0 = lists:keyreplace(scenario, 1, Opts, {scenario, Scenario}),
+            NewOpts1 =
+            case proplists:get_value(src_ip, NewOpts0) of
+                undefined -> NewOpts0;
+                SrcIpStr ->
+                    SrcIps0 =
+                    lists:foldl(fun(StrIp, Acc) ->
+                                         case inet:parse_address(StrIp) of
+                                             {ok, SrcIp} -> [SrcIp|Acc];
+                                             {error, _Reason} -> Acc
+                                         end
+                                end, [], re:split(SrcIpStr, ",", [{return, list}])),
+                    SrcIps1 =
+                    case SrcIps0 of
+                        [] ->
+                            %% maybe it is a prefix of an interface
+                            {ok, Interfaces} = inet:getifaddrs(),
+                            FilteredIfs =
+                            lists:filter(fun({IfName, _}) ->
+                                                 lists:prefix(SrcIpStr, IfName)
+                                         end, Interfaces),
+                            [proplists:get_value(addr, Conf) || {_, Conf} <- FilteredIfs];
+                        _ ->
+                            SrcIps0
+                    end,
+                    [{src_ips, SrcIps1}|NewOpts0]
+            end,
+            HostString = proplists:get_value(host, NewOpts1),
+            HostsWithPortString = re:split(HostString, ",", [{return, list}]),
+            HostsWithPort =
+            lists:foldl(fun(HostWithPort, Acc) ->
+                                case re:split(HostWithPort, ":", [{return, list}]) of
+                                    [Host] -> [{Host, 1883}|Acc];
+                                    [Host, Port] -> [{Host, list_to_integer(Port)}|Acc]
+                                end
+                        end, [], HostsWithPortString),
+            NewOpts2 = [{hosts, HostsWithPort}|lists:keydelete(host, 1, NewOpts1)],
             spawn_link(fun() ->
-                               setup(NumInstances, SleepTime, NewOpts)
+                               setup(NumInstances, SleepTime, NewOpts2)
                        end),
-            case proplists:get_value(track_stats, NewOpts, false) of
+            case proplists:get_value(track_stats, NewOpts2, false) of
                 true ->
                     Self = self(),
                     Self ! stats,
@@ -128,12 +164,11 @@ stats_loop(OldPm, OldCm, OldBi, OldBo, OldTS) ->
 %%====================================================================
 opt_specs() ->
     [
-        {host,      $h, "host",      {string, "localhost"},     "MQTT Broker Host"},
-        {port,      $p, "port",      {integer, 1883},           "MQTT Broker Port"},
+        {host,      $h, "host",      {string, "localhost:1883"},"MQTT broker host and port, multiple hosts can be specified divided by comma"},
         {scenario,  $s, "scenario",  string,                    "Scenario File"},
         {n,         $n, "num",       {integer, 10},             "Nr. of parallel instances"},
         {setup_rate,$r, "setup-rate",{integer, 10},             "Instance setup rate"},
-        {src_ip,    undefined, "src-addr", string,      "Source IP used during connect"},
+        {src_ip,    undefined, "src-addr", string,      "Source IP used during connect, multiple IPs can be specified divided by comma. Alternatively an interface prefix can be provided and all locally configured IPs for the interface are used."},
         {tls,       undefined, "tls", undefined,        "Enable TLS"},
         {client_cert, undefined, "cert", string,     "TLS Client Certificate"},
         {client_key, undefined, "key", string,     "TLS Client Private Key"},

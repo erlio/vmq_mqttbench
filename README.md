@@ -32,20 +32,23 @@ the `%c` is substituted with a randomly generated client id.
 
 ### ask for help 
 
-    ./vmq_mqttbench -h
-    Usage: vmq_mqttbench [-h [<host>]] [-p [<port>]] [-s <scenario>]
-                         [-n [<n>]] [-r [<setup_rate>]] [--src-addr <src_ip>]
-                         [--tls] [--cert <client_cert>] [--key <client_key>]
+    ./vmq_mqttbench --help
+    Usage: vmq_mqttbench [-h [<host>]] [-s <scenario>] [-n [<n>]]
+                         [-r [<setup_rate>]] [--src-addr <src_ip>] [--tls]
+                         [--cert <client_cert>] [--key <client_key>]
                          [--cafile <client_ca>] [--print-stats]
                          [--buffer [<buffer>]] [--nodelay [<nodelay>]]
                          [--recbuf [<recbuf>]] [--sndbuf [<sndbuf>]]
     
-      -h, --host        MQTT Broker Host [default: localhost]
-      -p, --port        MQTT Broker Port [default: 1883]
+      -h, --host        MQTT broker host and port, multiple hosts can be 
+                        specified divided by comma [default: localhost:1883]
       -s, --scenario    Scenario File
       -n, --num         Nr. of parallel instances [default: 10]
       -r, --setup-rate  Instance setup rate [default: 10]
-      --src-addr        Source IP used during connect
+      --src-addr        Source IP used during connect, multiple IPs can be 
+                        specified divided by comma. Alternatively an interface 
+                        prefix can be provided and all locally configured IPs 
+                        for the interface are used.
       --tls             Enable TLS
       --cert            TLS Client Certificate
       --key             TLS Client Private Key
@@ -58,4 +61,4 @@ the `%c` is substituted with a randomly generated client id.
                         socket [default: undefined]
       --sndbuf          The minimum size of the send buffer to use for the 
                         socket [default: undefined]
-        
+    
