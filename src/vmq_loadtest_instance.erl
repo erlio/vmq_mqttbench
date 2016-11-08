@@ -15,6 +15,7 @@
 -module(vmq_loadtest_instance).
 -include_lib("vmq_commons/include/vmq_types.hrl").
 -export([start_link/1,
+         subst_rand/1,
          init/2]).
 
 start_link(Opts) ->
@@ -139,15 +140,41 @@ enrich_scenario(Scenario, ClientId) ->
 
 enrich_steps([{subscribe, Topic, QoS}|Steps], ClientId, Acc) ->
     ETopic = re:replace(Topic, "%c", ClientId, [{return, list}, global]),
-    EStep = {subscribe, ETopic, QoS},
+    EStep = {subscribe, subst_rand(ETopic), QoS},
     enrich_steps(Steps, ClientId, [EStep|Acc]);
 enrich_steps([{publish, Topic, QoS, PayloadSize}|Steps], ClientId, Acc) ->
     ETopic = re:replace(Topic, "%c", ClientId, [{return, list}, global]),
-    EStep = {publish, ETopic, QoS, PayloadSize},
+    EStep = {publish, subst_rand(ETopic), QoS, PayloadSize},
     enrich_steps(Steps, ClientId, [EStep|Acc]);
 enrich_steps([Step|Steps], ClientId, Acc) ->
     enrich_steps(Steps, ClientId, [Step|Acc]);
 enrich_steps([], _, Acc) -> lists:reverse(Acc).
+
+subst_rand(Topic) ->
+    parse_rand(Topic, []).
+
+parse_rand([$%,$r,${|Rest], Prefix) ->
+   case parse_rand_end(Rest, []) of
+       no_rand -> parse_rand(Rest, [${,$r,$%|Prefix]);
+       {Rand, NewRest} ->
+           case io_lib:fread("~d,~d", Rand) of
+               {ok, [R1, R2], []} when R2 > R1 ->
+                   StrRand = integer_to_list(R1 - 1  + random:uniform(R2 - R1)),
+                   parse_rand(NewRest, lists:reverse(StrRand) ++ Prefix);
+               _ ->
+                   exit({invalid_rand_config, Rand})
+           end
+   end;
+parse_rand([C|Rest], Prefix) ->
+   parse_rand(Rest, [C|Prefix]);
+parse_rand([], Prefix) -> lists:reverse(Prefix).
+
+parse_rand_end([$}|Rest], Acc) -> {lists:reverse(Acc), Rest};
+parse_rand_end([], _) -> %% Acc not needed
+    no_rand;
+parse_rand_end([C|Rest], Acc) ->
+    parse_rand_end(Rest, [C|Acc]).
+
 
 
 
