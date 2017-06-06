@@ -87,7 +87,8 @@ setup(Transport, Socket, Opts) ->
     ClientId = gen_client_id(),
     Connect = vmq_parser:gen_connect(ClientId, Opts),
     send(Transport, Socket, Connect, connect),
-    {Proto, ProtoClosed, ProtoError} = active_once(Transport, Socket),
+    {Proto, ProtoClosed, ProtoError} = proto(Transport),
+    active_once(Transport, Socket),
     receive
         {Proto, Socket, Data} ->
             case vmq_parser:parse(Data) of
@@ -180,31 +181,37 @@ parse_rand_end([C|Rest], Acc) ->
 
 
 loop(Transport, Socket, Buf, Scenario) ->
-    loop(Transport, Socket, Buf, false, proplists:get_value(steps, Scenario, [])).
+    P = proto(Transport),
+    active_once(Transport, Socket),
+    loop(Transport, Socket, Buf, proplists:get_value(steps, Scenario, []), P).
 
-loop(Transport, Socket, Buf, IsActive, Steps) ->
-    {Proto, ProtoError, ProtoClosed} = active_once(IsActive, Transport, Socket),
+loop(Transport, Socket, Buf, Steps, {Proto, ProtoClosed, ProtoError} = P) ->
+    active_once(Transport, Socket),
     receive
         tick ->
             run_steps(Transport, Socket, Steps),
-            loop(Transport, Socket, Buf, IsActive, Steps);
+            loop(Transport, Socket, Buf, Steps, P);
         {Proto, _, Data} ->
             metrics({bytes_in, {inc, byte_size(Data)}}),
-            NewBuf = <<Buf/binary, Data/binary>>,
-            case vmq_parser:parse(NewBuf) of
-                more ->
-                    loop(Transport, Socket, NewBuf, false, Steps);
-                {error, Reason} ->
-                    exit({parse_error, Reason});
-                {Frame, Rest} ->
-                    handle_frame(Transport, Socket, Frame),
-                    loop(Transport, Socket, Rest, false, Steps)
-            end;
+            NewBuf = process_frame(Transport, Socket, <<Buf/binary, Data/binary>>),
+            loop(Transport, Socket, NewBuf, Steps, P);
         {ProtoError, _, Reason} ->
             exit({socket_error, Reason});
         {ProtoClosed, _} ->
             exit(socket_close)
     end.
+
+process_frame(Transport, Socket, Buf) ->
+    case vmq_parser:parse(Buf) of
+        more ->
+            Buf;
+        {error, Reason} ->
+            exit({parse_error, Reason});
+        {Frame, Rest} ->
+            handle_frame(Transport, Socket, Frame),
+            process_frame(Transport, Socket, Rest)
+    end.
+
 
 handle_frame(_Transport, _Socket, #mqtt_suback{}) -> ok;
 handle_frame(_Transport, _Socket, #mqtt_puback{}) ->
@@ -224,7 +231,7 @@ handle_frame(Transport, Socket, #mqtt_publish{qos=2, message_id=MId, payload=Pay
 handle_frame(Transport, Socket, #mqtt_pubrec{message_id=MId}) ->
     send(Transport, Socket, vmq_parser:gen_pubrel(MId), pubrel);
 handle_frame(Transport, Socket, #mqtt_pubrel{message_id=MId}) ->
-    K = {qos1, MId},
+    K = {qos2, MId},
     latency(get(K)),
     erase(K),
     metrics({consumed_msgs, {inc, 1}}),
@@ -235,17 +242,13 @@ handle_frame(_Transport, _Socket, #mqtt_pubcomp{}) ->
 handle_frame(_, _, Frame) ->
     exit({unexpected_frame, element(1, Frame)}).
 
-active_once(Transport, Socket) ->
-    active_once(false, Transport, Socket).
+proto(gen_tcp) -> {tcp, tcp_error, tcp_closed};
+proto(ssl) -> {ssl, ssl_error, ssl_closed}.
 
-active_once(true, gen_tcp, _) -> {tcp, tcp_error, tcp_closed};
-active_once(true, ssl, _) -> {ssl, ssl_error, ssl_closed};
-active_once(false, gen_tcp, Socket) ->
-    ok = inet:setopts(Socket, [{active, once}]),
-    {tcp, tcp_error, tcp_closed};
-active_once(false, ssl, Socket) ->
-    ok = ssl:setopts(Socket, [{active, once}]),
-    {ssl, ssl_error, ssl_closed}.
+active_once(gen_tcp, Socket) ->
+    ok = inet:setopts(Socket, [{active, once}]);
+active_once(ssl, Socket) ->
+    ok = ssl:setopts(Socket, [{active, once}]).
 
 gen_mid() ->
     case get(mid) of
