@@ -114,17 +114,25 @@ setup(Opts) ->
             spawn_link(fun() ->
                                setup(NumInstances, SleepTime, NewOpts2)
                        end),
-            case proplists:get_value(track_stats, NewOpts2, false) of
-                true ->
+            case {proplists:get_value(stats_out, NewOpts2, false),
+                  proplists:get_value(track_stats, NewOpts2, false)} of
+                {StatsOut, TrackStats} when (StatsOut =/= false) or TrackStats ->
                     Self = self(),
                     Self ! stats,
-                    stats_loop(0, 0, 0, 0, os:timestamp());
-                false ->
+                    MaybeFd = maybe_open_file(StatsOut),
+                    write_csv_header(MaybeFd),
+                    stats_loop(MaybeFd);
+                {_, false} ->
                     receive
                         die -> erlang:halt(0)
                     end
             end
     end.
+
+maybe_open_file(false) -> undefined;
+maybe_open_file(FileName) ->
+    {ok, FD} = file:open(FileName, [raw, write, binary]),
+    FD.
 
 setup(0, _, _) -> ok;
 setup(NumInstances, SleepTime, Opts) ->
@@ -132,31 +140,73 @@ setup(NumInstances, SleepTime, Opts) ->
     timer:sleep(SleepTime),
     setup(NumInstances - 1, SleepTime, Opts).
 
-stats_loop(OldPm, OldCm, OldBi, OldBo, OldTS) ->
+stats_loop(Fd) ->
+    stats_loop(Fd, {0,0,0,0,os:timestamp()}).
+stats_loop(Fd, StatsTmp0) ->
     receive
         die -> erlang:halt(0);
         stats ->
-            Metrics = folsom_metrics:get_metrics_value(vmq, counter),
-            NewTS = os:timestamp(),
-            {_, PM} = lists:keyfind(published_msgs, 1, Metrics),
-            {_, CM} = lists:keyfind(consumed_msgs, 1, Metrics),
-            {_, BI} = lists:keyfind(bytes_in, 1, Metrics),
-            {_, BO} = lists:keyfind(bytes_out, 1, Metrics),
-            TDiff = timer:now_diff(NewTS, OldTS),
-            Rates =
-            [{publish_rate, round(1000000 * (PM - OldPm) / TDiff)},
-             {consume_rate, round(1000000 * (CM - OldCm) / TDiff)},
-             {bytes_out_rate, round(1000000 * (BO - OldBo) / TDiff)},
-             {bytes_in_rate, round(1000000 * (BI - OldBi) / TDiff)}
-            ],
-            [{latency, Lats}] = folsom_metrics:get_metrics_value(vmq, histogram),
-            Stats = bear:get_statistics_subset(Lats, [n, min, max, arithmetic_mean,
-                                                      {percentile, [50, 75, 90, 95, 99, 999]}]),
-            io:format("~p~n", [Rates ++ Metrics ++ Stats]),
+            {Stats, StatsTmp1} = stats(StatsTmp0),
+            io:format("~p~n", [Stats]),
+            write_csv_line(Fd, Stats),
 
             erlang:send_after(1000, self(), stats),
-            stats_loop(PM, CM, BI, BO, NewTS)
+            stats_loop(Fd, StatsTmp1)
     end.
+
+stats({OldPm, OldCm, OldBi, OldBo, OldTS}) ->
+    Metrics = folsom_metrics:get_metrics_value(vmq, counter),
+    NewTS = os:timestamp(),
+    {_, PM} = lists:keyfind(published_msgs, 1, Metrics),
+    {_, CM} = lists:keyfind(consumed_msgs, 1, Metrics),
+    {_, BI} = lists:keyfind(bytes_in, 1, Metrics),
+    {_, BO} = lists:keyfind(bytes_out, 1, Metrics),
+    TDiff = timer:now_diff(NewTS, OldTS),
+    Rates =
+    [{publish_rate, round(1000000 * (PM - OldPm) / TDiff)},
+     {consume_rate, round(1000000 * (CM - OldCm) / TDiff)},
+     {bytes_out_rate, round(1000000 * (BO - OldBo) / TDiff)},
+     {bytes_in_rate, round(1000000 * (BI - OldBi) / TDiff)}
+    ],
+    [{latency, Lats}] = folsom_metrics:get_metrics_value(vmq, histogram),
+    Stats = bear:get_statistics_subset(Lats, [n, min, max, arithmetic_mean,
+                                              {percentile, [50, 75, 90, 95, 99, 999]}]),
+    {Rates ++ Metrics ++ Stats, {PM, CM, BI, BO, NewTS}}.
+
+
+fold_metrics(Transform, InitAcc, Stats) ->
+    lists:foldl(
+      fun
+          ({percentile, Ps}, Acc) ->
+              lists:foldl(fun(M, AccAcc) ->
+                                  Transform(M, AccAcc)
+                          end, Acc, Ps);
+          (M, Acc) ->
+              Transform(M, Acc)
+      end, InitAcc, Stats).
+
+write_csv_header(undefined) -> ok;
+write_csv_header(Fd) ->
+    {Stats, _} = stats({0, 0, 0, 0, os:timestamp()}),
+    Header = fold_metrics(fun csv_header/2, ["\n"], Stats),
+    file:write(Fd, ["timestamp,",Header]).
+
+write_csv_line(undefined, _) -> ok;
+write_csv_line(Fd, Stats) ->
+    {A, B, _} = os:timestamp(),
+    TS = integer_to_list((A * 1000000) + B),
+    Line = fold_metrics(fun csv_line/2, ["\n"], Stats),
+    file:write(Fd, [TS, ", ", Line]).
+
+csv_header({Metric, _}, Acc) when is_integer(Metric) ->
+    ["perc_" ++ integer_to_list(Metric), ","|Acc];
+csv_header({Metric, _}, Acc) when is_atom(Metric) ->
+    [atom_to_list(Metric), ","|Acc].
+
+csv_line({_, V}, Acc) when is_float(V) ->
+    [integer_to_list(round(V)), ","|Acc];
+csv_line({_, V}, Acc) when is_integer(V) ->
+    [integer_to_list(V), ","|Acc].
 
 
 %%====================================================================
@@ -174,6 +224,7 @@ opt_specs() ->
         {client_key, undefined, "key", string,     "TLS Client Private Key"},
         {client_ca, undefined, "cafile", string,     "TLS CA certificate chain"},
         {track_stats, undefined, "print-stats", undefined ,"Print Statistics"},
+        {stats_out, undefined, "out", string, "Print Statistics to File"},
         {buffer, undefined, "buffer", {integer, undefined},      "The size of the user-level software buffer used by the driver"},
         {nodelay, undefined, "nodelay", {boolean, true}, "TCP_NODELAY is turned on for the socket"},
         {recbuf, undefined, "recbuf", {integer, undefined}, "The minimum size of the receive buffer to use for the socket"},
