@@ -111,11 +111,17 @@ setup(Opts) ->
                                 end
                         end, [], HostsWithPortString),
             NewOpts2 = [{hosts, HostsWithPort}|lists:keydelete(host, 1, NewOpts1)],
+            Username = proplists:get_value(username, NewOpts2, undefined),
+            NewOpts3 = [{username,Username}|lists:keydelete(username, 1, NewOpts2)],
+            Password = proplists:get_value(password, NewOpts1, undefined),
+            NewOpts4 = [{password,Password}|lists:keydelete(password, 1, NewOpts3)],
+            Keepalive = proplists:get_value(keepalive, NewOpts1, 0),
+            NewOpts5 = [{keepalive,Keepalive}|lists:keydelete(keepalive, 1, NewOpts4)],
             spawn_link(fun() ->
-                               setup(NumInstances, SleepTime, NewOpts2)
+                               setup(NumInstances, SleepTime, NewOpts5)
                        end),
-            case {proplists:get_value(stats_out, NewOpts2, false),
-                  proplists:get_value(track_stats, NewOpts2, false)} of
+            case {proplists:get_value(stats_out, NewOpts5, false),
+                  proplists:get_value(track_stats, NewOpts5, false)} of
                 {StatsOut, TrackStats} when (StatsOut =/= false) or TrackStats ->
                     Self = self(),
                     Self ! stats,
@@ -228,6 +234,8 @@ opt_specs() ->
         {buffer, undefined, "buffer", {integer, undefined},      "The size of the user-level software buffer used by the driver"},
         {nodelay, undefined, "nodelay", {boolean, true}, "TCP_NODELAY is turned on for the socket"},
         {recbuf, undefined, "recbuf", {integer, undefined}, "The minimum size of the receive buffer to use for the socket"},
-        {sndbuf, undefined, "sndbuf", {integer, undefined}, "The minimum size of the send buffer to use for the socket"}
-
+        {sndbuf, undefined, "sndbuf", {integer, undefined}, "The minimum size of the send buffer to use for the socket"},
+        {username, undefined, "username", string, "The MQTT username"},
+        {password, undefined, "password", string, "The MQTT password"},
+        {keepalive, undefined, "keepalive", {integer, 0}, "The MQTT keepalive value"}
     ].
