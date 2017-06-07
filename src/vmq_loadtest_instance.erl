@@ -85,7 +85,8 @@ send(Transport, Socket, Data, What) ->
 
 setup(Transport, Socket, Opts) ->
     ClientId = gen_client_id(),
-    Connect = vmq_parser:gen_connect(ClientId, Opts),
+    Opts1 = maybe_use_client_id_as_username(Opts, ClientId),
+    Connect = vmq_parser:gen_connect(ClientId, Opts1),
     send(Transport, Socket, Connect, connect),
     {Proto, ProtoClosed, ProtoError} = proto(Transport),
     active_once(Transport, Socket),
@@ -94,7 +95,7 @@ setup(Transport, Socket, Opts) ->
             case vmq_parser:parse(Data) of
                 {#mqtt_connack{}, Rest} ->
                     metrics({num_instances, {inc, 1}}),
-                    Scenario = proplists:get_value(scenario, Opts, []),
+                    Scenario = proplists:get_value(scenario, Opts1, []),
                     EScenario = enrich_scenario(Scenario, ClientId),
                     SetupSteps = proplists:get_value(setup, EScenario, []),
                     run_steps(Transport, Socket, SetupSteps),
@@ -176,9 +177,13 @@ parse_rand_end([], _) -> %% Acc not needed
 parse_rand_end([C|Rest], Acc) ->
     parse_rand_end(Rest, [C|Acc]).
 
-
-
-
+maybe_use_client_id_as_username(Opts, ClientId) ->
+    case proplists:get_value(username, Opts, undefined) of
+        "use_client_id" ->
+            [{username,ClientId}|lists:keydelete(username, 1, Opts)];
+        _ ->
+         Opts
+    end.
 
 loop(Transport, Socket, Buf, Scenario) ->
     P = proto(Transport),
