@@ -1,4 +1,5 @@
 #!/usr/bin/env Rscript
+args = commandArgs(trailingOnly=TRUE)
 
 packages.to.install <- c("grid", "ggplot2")
 
@@ -11,9 +12,20 @@ for (p in packages.to.install)
     }
 }
 
-png(file = "plot.png", width = 1200, height = 800)
+if (length(args)==0) {
+   infile = "bench.csv"
+   outfile = "bench.png"
+} else if (length(args)==2) {
+  # default output file
+   infile = args[1]
+   outfile = args[2]
+} else {
+  stop("Wrong number of arguments.n", call.=FALSE)
+}
 
-dat <- read.csv("bench.csv")
+png(file = outfile, width = 1200, height = 800)
+
+dat <- read.csv(infile)
 init_ts = dat$timestamp[1]
 dat$ts = dat$timestamp - init_ts
 bench_plot <- ggplot(dat, aes(x = ts)) +
